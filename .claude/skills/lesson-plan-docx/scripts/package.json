@@ -1,0 +1,12 @@
+{
+  "name": "lesson-plan-docx-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Config-driven pipeline for converting Thai-curriculum lesson-plan PDFs into formatted Word docs + worksheets.",
+  "dependencies": {
+    "docx": "^9.6.1",
+    "jszip": "^3.10.1",
+    "pdf-lib": "^1.17.1",
+    "pdf-to-img": "^6.1.0"
+  }
+}

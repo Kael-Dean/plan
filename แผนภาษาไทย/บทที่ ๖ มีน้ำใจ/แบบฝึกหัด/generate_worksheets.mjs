@@ -1,0 +1,674 @@
+// TEMPLATE worksheet generator. The agent COPIES this into <unitDir>/แบบฝึกหัด/ and fills
+// the WORKSHEETS array (one entry per plan) with content drawn from each plan's
+// "๖. กิจกรรมการเรียนรู้" + the real textbook page images. Reads ../config.json for the
+// banner + filenames. Generates worksheet_<n>.html then prints each to PDF via Edge headless.
+// Run from inside <unitDir>/แบบฝึกหัด/:  node generate_worksheets.mjs
+import { readFileSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const cfg = JSON.parse(readFileSync(join(__dirname, "..", "config.json"), "utf8"));
+const SUBJECT = cfg.subject, GRADE = cfg.grade, UNIT_NO = cfg.unitNo, UNIT_NAME = cfg.unitName;
+
+// ========== SHARED CSS (card-based worksheet style) ==========
+const CSS = `
+  :root{
+    --ink:#1f2a44; --ink-soft:#3b4660;
+    --line:#cfd6e4; --line-soft:#e6ebf3;
+    --accent:#3b82f6;
+    --yellow:#fff3c4; --yellow-b:#f3c64a;
+    --blue:#dbeafe;   --blue-b:#3b82f6;
+    --green:#d6f5e1;  --green-b:#22a06b;
+    --pink:#ffe0ec;   --pink-b:#e85a8c;
+    --purple:#ece4ff; --purple-b:#7b5cf0;
+    --cream:#fffbf0;
+  }
+  *{box-sizing:border-box}
+  @page{size:A4; margin:8mm 9mm}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:"Sarabun","Leelawadee UI","Tahoma",sans-serif;
+    color:var(--ink); font-size:14pt; line-height:1.3;
+    background:#fff;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+  }
+  .page{padding:0 2mm}
+  .top{display:grid; grid-template-columns:1fr auto auto; gap:12px; align-items:end;
+    padding-bottom:3px; margin-bottom:4px; border-bottom:1.5px dashed var(--line);}
+  .field{display:flex; align-items:flex-end; gap:6px; font-family:"Sarabun"; font-size:14pt;
+    border-bottom:1.2px solid var(--ink); padding-bottom:2px; min-height:24px;}
+  .field b{font-weight:600}
+  .field.name{min-width:62mm}
+  .field.cls{min-width:30mm}
+  .field.no{min-width:22mm}
+  .banner{position:relative;
+    background:linear-gradient(135deg,#e0f2ff 0%,#dbeafe 50%,#e7e1ff 100%);
+    border:2px solid var(--blue-b); border-radius:16px;
+    padding:8px 22px 8px; margin:4px 0 8px; overflow:hidden;}
+  .banner::before, .banner::after{content:""; position:absolute;
+    width:80px; height:80px; border-radius:50%; opacity:.55; pointer-events:none;}
+  .banner::before{left:-22px; top:-26px;
+    background:radial-gradient(circle at 50% 50%, #93c5fd 0%, transparent 70%);}
+  .banner::after{right:-26px; bottom:-30px;
+    background:radial-gradient(circle at 50% 50%, #c4b5fd 0%, transparent 70%);}
+  .banner h1{margin:0; font-family:"Mali"; font-weight:700;
+    font-size:17pt; text-align:center; color:#1d4ed8; letter-spacing:.2px; line-height:1.2;}
+  .banner h2{margin:1px 0 0; font-family:"Mali"; font-weight:600;
+    font-size:15pt; text-align:center; color:#3730a3;}
+  .banner .sub{margin-top:3px; text-align:center;
+    font-family:"Sarabun"; font-size:11pt; color:#3b4660;}
+  .banner .chip{display:inline-block; padding:1px 12px; margin-top:3px;
+    background:#fff; border:1.2px solid var(--blue-b); border-radius:99px;
+    font-family:"Mali"; font-size:11pt; color:#1d4ed8;}
+  .card{border-radius:12px; padding:8px 14px 10px;
+    margin-bottom:8px; border:1.6px solid; position:relative;
+    break-inside:avoid; page-break-inside:avoid;}
+  .card .head{display:flex; align-items:center; gap:10px; margin:0 0 6px;}
+  .card .num{flex:none; width:28px; height:28px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-family:"Mali"; font-weight:700; font-size:14pt;
+    color:#fff; box-shadow:0 2px 0 rgba(0,0,0,.05);}
+  .card h3{margin:0; flex:1; font-family:"Mali"; font-weight:700; font-size:14pt; color:var(--ink);}
+  .card .hint{margin:4px 0 6px; font-family:"Sarabun"; font-size:11.5pt; font-style:italic; color:#5a6478;}
+  .card .hint b{font-style:normal; color:var(--ink); font-weight:600}
+  .c-yellow{background:var(--yellow); border-color:var(--yellow-b)}
+  .c-yellow .num{background:var(--yellow-b)}
+  .c-blue{background:var(--blue); border-color:var(--blue-b)}
+  .c-blue .num{background:var(--blue-b)}
+  .c-green{background:var(--green); border-color:var(--green-b)}
+  .c-green .num{background:var(--green-b)}
+  .c-pink{background:var(--pink); border-color:var(--pink-b)}
+  .c-pink .num{background:var(--pink-b)}
+  .c-purple{background:var(--purple); border-color:var(--purple-b)}
+  .c-purple .num{background:var(--purple-b)}
+  .song{background:#fff; border:1.5px dashed var(--yellow-b);
+    border-radius:10px; padding:8px 14px; text-align:center;
+    font-family:"Mali"; font-size:13pt; line-height:1.6; color:#7a4a00;}
+  .song .title{font-size:14pt; font-weight:700; margin-bottom:2px; color:#a16207;}
+  .song .blank{display:inline-block; min-width:60px;
+    border-bottom:1.8px solid #b45309; margin:0 4px;}
+  .song .note{margin-top:4px; padding-top:4px; border-top:1px dotted #d4a83a;
+    font-size:11pt; font-family:"Sarabun"; color:#7a4a00;}
+  .song .note b{font-family:"Mali"; color:#a16207}
+  .match{display:grid; grid-template-columns:1fr 1fr; gap:0 28px; padding:2px 4px;}
+  .match-half{display:grid; grid-template-columns:78px 1fr; gap:5px 44px;
+    align-items:center; position:relative;}
+  .mw{background:#fff; border:1.6px solid var(--blue-b); border-radius:8px;
+    padding:3px 0; text-align:center; font-family:"Mali"; font-size:15pt;
+    font-weight:700; color:#1d4ed8; min-height:32px;
+    display:flex; align-items:center; justify-content:center; position:relative;}
+  .mm{background:#fff; border:1.6px solid var(--blue-b); border-radius:8px;
+    padding:4px 10px; font-family:"Sarabun"; font-size:11.5pt; line-height:1.2;
+    min-height:32px; display:flex; align-items:center; position:relative;}
+  .mw::after, .mm::before{content:""; position:absolute; top:50%;
+    width:8px; height:8px; border-radius:50%;
+    background:#1d4ed8; border:1.4px solid #fff;
+    box-shadow:0 0 0 1.2px #1d4ed8;}
+  .mm::before{ left:-6px;  transform:translate(-50%,-50%); }
+  .mw::after { right:-6px; transform:translate(50%,-50%); }
+  .spell{width:100%; border-collapse:separate; border-spacing:0;
+    background:#fff; border:1.4px solid var(--green-b); border-radius:12px;
+    overflow:hidden;}
+  .spell thead th{background:var(--green-b); color:#fff;
+    font-family:"Mali"; font-weight:600; font-size:12.5pt; padding:4px 10px;}
+  .spell td{border-top:1px solid #b9e3c8; padding:5px 12px;
+    font-family:"Sarabun"; font-size:13pt;}
+  .spell td.w{width:22%; text-align:center;
+    font-family:"Mali"; font-weight:700; font-size:17pt; color:#0f6b3f;
+    background:#eef9f2;}
+  .spell td.line{background:
+    linear-gradient(#22a06b,#22a06b) 0 0/100% 1.2px no-repeat,
+    linear-gradient(#a3d9bb,#a3d9bb) 0 50%/100% 1px no-repeat,
+    linear-gradient(#22a06b,#22a06b) 0 100%/100% 1.2px no-repeat;
+    height:38px;}
+  .ex{margin:0 0 5px; padding:4px 12px;
+    background:#fff; border-left:5px solid var(--green-b); border-radius:8px;
+    font-family:"Sarabun"; font-size:11.5pt;}
+  .ex b{font-family:"Mali"; color:#0f6b3f}
+  .copy{width:100%; border-collapse:separate; border-spacing:0;
+    background:#fff; border:1.4px solid var(--purple-b); border-radius:12px;
+    overflow:hidden;}
+  .copy td{padding:4px 10px; vertical-align:middle}
+  .copy tr+tr td{border-top:1px solid #d8cbff}
+  .copy td.w{width:18%; text-align:center;
+    font-family:"Mali"; font-weight:700; font-size:19pt; color:#4c1d95;
+    background:#f5f1ff;}
+  .copy td.lines{height:40px;
+    background:
+      linear-gradient(#d8cbff,#d8cbff) 0 0/100% 1px no-repeat,
+      linear-gradient(#ece8ff,#ece8ff) 0 50%/100% 1px no-repeat,
+      linear-gradient(#d8cbff,#d8cbff) 0 100%/100% 1px no-repeat;}
+  .foot{margin-top:6px; padding:5px 14px;
+    border:1.4px solid var(--line); border-radius:10px; background:var(--cream);
+    display:flex; justify-content:space-between; align-items:center;
+    font-family:"Sarabun"; font-size:11.5pt;}
+  .foot .score{display:inline-block; padding:2px 12px; border-radius:99px;
+    background:#fff; border:1.4px solid var(--yellow-b);
+    font-family:"Mali"; color:#7a4a00;}
+  .foot .sig{border-bottom:1.2px solid var(--ink); display:inline-block; min-width:44mm}
+  .lines-tall{height:90px;
+    background:repeating-linear-gradient(to bottom,
+      transparent 0, transparent 24px, #d8cbff 24px, #d8cbff 25px);
+    margin-top:6px;}
+  .lines-3{height:60px;
+    background:repeating-linear-gradient(to bottom,
+      transparent 0, transparent 24px, var(--ink-soft) 24px, var(--ink-soft) 25px);
+    margin-top:4px;}
+  .panel-row{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .panel{background:#fff; border:1.5px solid var(--purple-b); border-radius:10px;
+    padding:6px 10px;}
+  .panel .pl{font-family:"Mali"; color:#4c1d95; font-size:12pt; font-weight:700;}
+  .word-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:6px;}
+  .word-cell{background:#fff; border:1.6px solid var(--blue-b); border-radius:8px;
+    text-align:center; padding:6px 4px; font-family:"Mali"; font-size:13pt;
+    font-weight:700; color:#1d4ed8;}
+  .chip-row{display:flex; flex-wrap:wrap; gap:6px; padding:4px;}
+  .chip-row .chip{display:inline-block; padding:3px 12px;
+    background:#fff; border:1.5px solid #92400e; border-radius:99px;
+    font-family:"Mali"; font-size:12pt; color:#7a4a00;}
+  .cat-table{width:100%; border-collapse:separate; border-spacing:0;
+    background:#fff; border:1.4px solid var(--green-b); border-radius:10px; overflow:hidden;}
+  .cat-table th{background:var(--green-b); color:#fff; padding:6px;
+    font-family:"Mali"; font-size:13pt;}
+  .cat-table td{border-top:1px solid #b9e3c8; padding:8px 10px; height:54px;}
+  .blank-line{border-bottom:1.6px dashed #555; display:inline-block; min-width:80px;}
+`;
+
+const THAI = ["", "๑", "๒", "๓", "๔", "๕", "๖", "๗", "๘", "๙", "๑๐", "๑๑", "๑๒", "๑๓"];
+
+// ========== HEADER + BANNER ==========
+const drop = `<svg viewBox="0 0 24 24" width="22" height="22" style="vertical-align:-3px"><path fill="#3b82f6" d="M12 2C9 7 5 11 5 15a7 7 0 0 0 14 0c0-4-4-8-7-13Z"/></svg>`;
+
+function header(num, topic, objective) {
+  return `
+  <div class="top">
+    <div class="field name"><b>ชื่อ–นามสกุล</b> </div>
+    <div class="field cls"><b>ชั้น</b> </div>
+    <div class="field no"><b>เลขที่</b> </div>
+  </div>
+  <div class="banner">
+    <h1>${drop} ใบงานวิชา${SUBJECT} • ${GRADE} ${drop}</h1>
+    <h2>บทที่ ${UNIT_NO}  ${UNIT_NAME}</h2>
+    <div class="sub"><span class="chip">ใบงานที่ ${num}  ${topic}</span></div>
+    <div class="sub">จุดประสงค์ : ${objective}</div>
+  </div>`;
+}
+
+const footer = `
+  <div class="foot">
+    <div><span class="score">คะแนนเต็ม ๒๐</span> &nbsp; คะแนนที่ได้ <span class="sig" style="min-width:18mm"></span></div>
+    <div>ลายเซ็นผู้ปกครอง <span class="sig"></span></div>
+    <div>ผู้ตรวจ <span class="sig"></span></div>
+  </div>`;
+
+// ========== ACTIVITY BUILDERS ==========
+function card(color, num, title, body) {
+  return `<div class="card c-${color}">
+    <div class="head"><div class="num">${num}</div><h3>${title}</h3></div>
+    ${body}
+  </div>`;
+}
+function matchActivity(pairs) {
+  const mid = Math.ceil(pairs.length / 2);
+  const row = (p) => `<div class="mw">${p.w}</div><div class="mm">${p.m}</div>`;
+  return `<div class="match">
+    <div class="match-half">${pairs.slice(0, mid).map(row).join("")}</div>
+    <div class="match-half">${pairs.slice(mid).map(row).join("")}</div>
+  </div>`;
+}
+function spellActivity(words, example) {
+  return `${example ? `<div class="ex"><b>ตัวอย่าง :</b> &nbsp; ${example}</div>` : ""}
+    <table class="spell">
+      <thead><tr><th style="width:22%">คำ</th><th>แจกลูกสะกดคำ</th></tr></thead>
+      <tbody>${words.map(w => `<tr><td class="w">${w}</td><td class="line"></td></tr>`).join("")}</tbody>
+    </table>`;
+}
+function copyActivity(words) {
+  return `<table class="copy">${words.map(w => `<tr><td class="w">${w}</td><td class="lines"></td></tr>`).join("")}</table>`;
+}
+function wordGridActivity(words) {
+  return `<div class="word-grid">${words.map(w => `<div class="word-cell">${w}</div>`).join("")}</div>`;
+}
+function songActivity(title, lines, hintWords) {
+  return `<div class="song">
+    <div class="title">♪  ${title}  ♪</div>
+    ${lines.map(l => `<div>${l}</div>`).join("")}
+    ${hintWords ? `<div class="note"><b>คำที่ใช้เติม :</b> ${hintWords}</div>` : ""}
+  </div>`;
+}
+function panelsActivity(panels) {
+  return `<div class="panel-row">${panels.map(p => `
+    <div class="panel"><div class="pl">${p.label}</div><div class="lines-3"></div></div>`).join("")}</div>`;
+}
+function catActivity(headers, rows, hint) {
+  return `${hint ? `<div class="hint"><b>คำที่ใช้ :</b> ${hint}</div>` : ""}
+  <table class="cat-table">
+    <tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr>
+    ${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}
+  </table>`;
+}
+function writeBox() { return `<div class="lines-tall"></div>`; }
+function qaBox(color, questions) {
+  return `<div style="background:#fff;border:1.5px dashed var(--${color}-b);border-radius:10px;padding:10px;">
+    ${questions.map((q, i) =>
+      `<div style="margin-bottom:${i < questions.length - 1 ? "8px" : "0"};"><b>${THAI[i + 1]}.</b> ${q}<div class="lines-3" style="margin-top:4px"></div></div>`,
+    ).join("")}
+  </div>`;
+}
+function fillSentences(color, hint, sentences) {
+  const c = color === "blue" ? "#1d4ed8" : color === "green" ? "#0f6b3f" : color === "yellow" ? "#a16207" : "#be185d";
+  return `<div class="hint"><b>คำที่ใช้ :</b> ${hint}</div>
+  <div style="background:#fff;border:1.5px solid var(--${color}-b);border-radius:8px;padding:8px 12px;font-family:Sarabun;font-size:12.5pt;line-height:2.4">
+    ${sentences.map((s, i) => `<div><b>${THAI[i + 1]}.</b> ${s.replace(/@/g, `<span class="blank-line" style="border-color:${c}"></span>`)}</div>`).join("")}
+  </div>`;
+}
+function tableActivity(color, headers, rows) {
+  const map = {
+    blue: { hbg: "var(--blue-b)", wcol: "#1d4ed8", wbg: "#dbeafe" },
+    green: { hbg: "var(--green-b)", wcol: "#0f6b3f", wbg: "#eef9f2" },
+    purple: { hbg: "var(--purple-b)", wcol: "#4c1d95", wbg: "#f5f1ff" },
+    yellow: { hbg: "var(--yellow-b)", wcol: "#a16207", wbg: "#fff6db" },
+    pink: { hbg: "var(--pink-b)", wcol: "#be185d", wbg: "#ffe9f1" },
+  };
+  const m = map[color] || map.blue;
+  return `<table class="spell" style="border-color:${m.hbg}">
+    <thead style="background:${m.hbg}"><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(r => `<tr>${r.map((c, i) =>
+      i === 0
+        ? `<td class="w" style="color:${m.wcol};background:${m.wbg}">${c}</td>`
+        : (c === "" ? `<td class="line"></td>` : `<td style="text-align:center;font-family:Sarabun;font-size:13pt">${c}</td>`),
+    ).join("")}</tr>`).join("")}</tbody>
+  </table>`;
+}
+function drawBox(color, h = 140, captionLabel = "") {
+  return `<div style="background:#fff;border:1.5px solid var(--${color}-b);border-radius:10px;padding:8px;">
+    <div style="height:${h}px;border:1.5px dashed var(--${color}-b);border-radius:8px;background:#fafafa;"></div>
+    ${captionLabel ? `<div style="font-family:Mali;color:#4c1d95;margin:6px 0 2px;"><b>${captionLabel}</b></div><div class="lines-3"></div>` : ""}
+  </div>`;
+}
+
+// ========== BUILD WHOLE PAGE ==========
+function buildPage(num, topic, objective, activities) {
+  return `<!doctype html><html lang="th"><head>
+<meta charset="utf-8"><title>ใบงานที่ ${num} บทที่ ${UNIT_NO} ${UNIT_NAME}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Mali:wght@400;500;600;700&family=Sarabun:wght@400;500;600;700&family=Itim&display=swap" rel="stylesheet">
+<style>${CSS}</style></head>
+<body><div class="page">
+${header(num, topic, objective)}
+${activities.join("\n")}
+${footer}
+</div></body></html>`;
+}
+
+// ========== WORKSHEET DEFINITIONS ==========
+// AGENT: fill one entry per plan. num = Thai numeral; topic/objective from the plan's
+// จุดประสงค์ (หัวข้อ ๓); activities = array of card(...) calls using the builders above.
+// Content MUST come from the plan's "๖. กิจกรรมการเรียนรู้" + real textbook content
+// (read the imageFolder pages). RULES: worksheets are EXERCISES (เติม/โยง/แยก/แต่ง/ตอบ/คัด),
+// NOT "ดูภาพ/อ่านตามหนังสือ"; no duplicate questions within or across sheets.
+// See ../../references/worksheet-spec.md (or the skill's references/worksheet-spec.md).
+const WORKSHEETS = [
+  // ============ WS 1: เรียนรู้คำ นำเรื่อง (ตอน ๑) ============
+  {
+    num: "๑",
+    topic: "เรียนรู้คำ นำเรื่อง",
+    objective: "อ่านแจกลูกสะกดคำได้ และบอกความหมายของคำในบทเรียนได้",
+    activities: [
+      card("green", "๑", "เขียนแจกลูกสะกดคำต่อไปนี้ตามตัวอย่าง",
+        spellActivity(
+          ["เสือ", "ลิง", "คลาน", "ชะนี", "โหน"],
+          "<b>หมี</b> &nbsp;→&nbsp; ห – มี &nbsp; อ่านว่า &nbsp; <b>หมี</b>")),
+
+      card("pink", "๒", "โยงเส้นจับคู่คำกับความหมายให้ถูกต้อง",
+        matchActivity([
+          { w: "แอบ", m: "ซ่อนตัวไม่ให้คนอื่นเห็น" },
+          { w: "สอน", m: "บอกหรือชี้แนะให้รู้ทำเป็น" },
+          { w: "โหน", m: "จับห้อยตัวแล้วแกว่งไปมา" },
+          { w: "คลาน", m: "เคลื่อนตัวไปด้วยมือและเข่า" },
+          { w: "พับ", m: "ทบของให้ซ้อนกันเป็นชั้น" },
+          { w: "สาธารณะ", m: "ของส่วนรวม ใช้ร่วมกันได้" },
+        ])),
+
+      card("blue", "๓", "วงกลมคำที่เป็น “ชื่อสัตว์” ในกลุ่มคำต่อไปนี้",
+        wordGridActivity([
+          "เสือ", "จาน", "ลิง", "หมี",
+          "ชะนี", "ที่นอน", "ฮิปโป", "งานบ้าน",
+          "ยีราฟ", "จระเข้", "นกขุนทอง", "ยอดไม้",
+        ])),
+
+      card("purple", "๔", "คัดคำต่อไปนี้ด้วยตัวบรรจง",
+        copyActivity(["เสือ", "จาน", "ลิง", "แอบ", "สอน", "โหน", "พับ", "คลาน", "หมี", "ชะนี"])),
+    ],
+  },
+
+  // ============ WS 2: เรียนรู้คำ นำเรื่อง (ตอน ๒) — ทบทวนและเขียนตามคำบอก ============
+  {
+    num: "๒",
+    topic: "เรียนรู้คำ นำเรื่อง (ทบทวนและคัดคำ)",
+    objective: "อ่านแจกลูกสะกดคำได้ และบอกความหมายของคำได้",
+    activities: [
+      card("blue", "๑", "เขียนแจกลูกสะกดคำต่อไปนี้ตามตัวอย่าง",
+        spellActivity(
+          ["แบ่งปัน", "ฮิปโป", "ยีราฟ", "สาธารณะ", "จระเข้"],
+          "<b>ที่นอน</b> &nbsp;→&nbsp; ที่ – นอน &nbsp; อ่านว่า &nbsp; <b>ที่นอน</b>")),
+
+      card("green", "๒", "โยงเส้นจับคู่คำกับความหมายให้ถูกต้อง",
+        matchActivity([
+          { w: "แบ่งปัน", m: "ให้สิ่งของแก่กันด้วยน้ำใจ" },
+          { w: "งานบ้าน", m: "งานในบ้าน เช่น กวาด ถู ล้างจาน" },
+          { w: "มารยาท", m: "กิริยาที่สุภาพเรียบร้อย" },
+          { w: "ขยะ", m: "ของที่ทิ้งแล้ว ไม่ใช้ต่อ" },
+          { w: "ช่วยเหลือ", m: "ทำให้ผู้อื่นพ้นความลำบาก" },
+          { w: "เกลื่อน", m: "กระจัดกระจายอยู่เต็มไปหมด" },
+        ])),
+
+      card("pink", "๓", "เขียนตามคำบอก — ครูอ่านคำให้ แล้วนักเรียนเขียนลงในช่องให้ถูกต้อง", `
+        <div class="hint"><b>คำที่ครูอ่านให้ :</b> เสือ • คลาน • หมี • โหน • แอบ • แบ่งปัน • ฮิปโป • ยีราฟ • สาธารณะ • จระเข้</div>
+        <table class="copy">
+          ${Array.from({ length: 5 }).map(() => `<tr><td class="w" style="width:8%">…</td><td class="lines"></td></tr>`).join("")}
+        </table>`),
+
+      card("purple", "๔", "คัดคำต่อไปนี้ด้วยตัวบรรจง",
+        copyActivity(["แบ่งปัน", "ยอดไม้", "ฮิปโป", "ยีราฟ", "นกขุนทอง", "สาธารณะ", "จระเข้", "งานบ้าน", "มารยาท", "ช่วยเหลือ"])),
+    ],
+  },
+
+  // ============ WS 3: การอ่านออกเสียง — เรื่อง มีน้ำใจ ============
+  {
+    num: "๓",
+    topic: "การอ่านออกเสียง — เรื่อง มีน้ำใจ",
+    objective: "อ่านออกเสียงเนื้อหาในบทเรียนได้ และตอบคำถามจากเรื่องที่อ่านได้",
+    activities: [
+      card("blue", "๑", "ตอบคำถามจากเรื่อง “มีน้ำใจ” โดยเขียนคำตอบลงในช่องว่าง",
+        qaBox("blue", [
+          "พี่หมอกและพี่ไหมเป็นลูกของใคร?",
+          "เด็ก ๆ พากันไปเที่ยวที่ใด?",
+          "ฮิปโปชอบอยู่ที่ใด?",
+        ])),
+
+      card("green", "๒", "เติมชื่อสัตว์ที่กล่าวถึงในเรื่อง ลงในแผนภาพความคิด", `
+        <div style="background:#fff;border:1.5px solid var(--green-b);border-radius:10px;padding:10px;">
+          <div style="text-align:center;font-family:Mali;color:#0f6b3f;font-size:13pt;margin-bottom:8px;">
+            <span style="display:inline-block;background:var(--green);border:1.8px solid var(--green-b);border-radius:99px;padding:4px 22px;">สัตว์ในเรื่อง มีน้ำใจ</span>
+          </div>
+          <div class="word-grid" style="grid-template-columns:repeat(3,1fr);">
+            ${Array.from({ length: 6 }).map(() =>
+              `<div style="border:1.5px dashed var(--green-b);border-radius:8px;height:34px;background:#f4fbf6;"></div>`).join("")}
+          </div>
+        </div>`),
+
+      card("pink", "๓", "เรื่องนี้สอนให้เรารู้จักการมีน้ำใจ — นักเรียนเคยช่วยเหลือผู้อื่นเรื่องใดบ้าง เขียนเล่ามา", `
+        <div style="background:#fff;border:1.5px dashed var(--pink-b);border-radius:10px;padding:10px;">
+          <div style="font-family:Mali;color:#9d174d;margin-bottom:6px;"><b>เขียนเล่า:</b></div>
+          ${writeBox()}
+        </div>`),
+    ],
+  },
+
+  // ============ WS 4: การอ่านจับใจความ — คิดวิเคราะห์เรื่อง มีน้ำใจ ============
+  {
+    num: "๔",
+    topic: "การอ่านจับใจความ — คิดวิเคราะห์เรื่อง มีน้ำใจ",
+    objective: "บอกเนื้อหาสาระ แสดงความคิดเห็น และบอกข้อคิดจากเรื่องได้",
+    activities: [
+      card("blue", "๑", "ตอบคำถามคิดวิเคราะห์จากเรื่อง “มีน้ำใจ”",
+        qaBox("blue", [
+          "เมื่อไปพักบ้านคนอื่น เราควรปฏิบัติตัวอย่างไร?",
+          "ภูผาและน้ำใสช่วยกันทำสิ่งใดที่แสดงถึงการมีน้ำใจ?",
+          "เพราะเหตุใดเรื่องนี้จึงตั้งชื่อว่า “มีน้ำใจ”?",
+        ])),
+
+      card("green", "๒", "เขียนเปรียบเทียบ การกระทำที่ “มีน้ำใจ” และ “ไม่มีน้ำใจ”", `
+        <table class="cat-table">
+          <tr><th style="width:50%">การกระทำที่มีน้ำใจ</th><th>การกระทำที่ไม่มีน้ำใจ</th></tr>
+          <tr><td></td><td></td></tr>
+          <tr><td></td><td></td></tr>
+        </table>`),
+
+      card("pink", "๓", "วาดภาพการกระทำที่แสดงถึงการมีน้ำใจ พร้อมเขียนบรรยายสั้น ๆ",
+        drawBox("pink", 120, "คำบรรยายภาพ:")),
+
+      card("purple", "๔", "ข้อคิดที่ได้จากเรื่อง และการนำไปใช้ในชีวิตประจำวัน",
+        panelsActivity([
+          { label: "✦ ข้อคิดที่ได้จากเรื่อง" },
+          { label: "♥ ฉันจะนำไปปฏิบัติอย่างไร" },
+        ])),
+    ],
+  },
+
+  // ============ WS 5: คำศัพท์จากบทเรียน — อ่านและแต่งประโยค ============
+  {
+    num: "๕",
+    topic: "คำศัพท์จากบทเรียน — อ่านและแต่งประโยค",
+    objective: "อ่านสะกดคำในบทเรียนได้ บอกความหมายของคำ และนำคำไปใช้ได้ถูกต้องตามสถานการณ์",
+    activities: [
+      card("yellow", "๑", "เขียนแจกลูกสะกดคำต่อไปนี้ตามตัวอย่าง",
+        spellActivity(
+          ["แบ่งปัน", "น้ำใจ", "โหน", "งานบ้าน", "ขยะ"],
+          "<b>เสริม</b> &nbsp;→&nbsp; ส – เออ – ม &nbsp; อ่านว่า &nbsp; <b>เสริม</b>")),
+
+      card("green", "๒", "เลือกคำที่กำหนดให้เติมลงในประโยคให้ได้ใจความ",
+        fillSentences("green", "แบ่งปัน • น้ำใจ • งานบ้าน • ขยะ • ช่วยเหลือ", [
+          "ฉันช่วยแม่ทำ @ ทุกวันหลังเลิกเรียน",
+          "เด็กดีต้องรู้จัก @ ขนมให้เพื่อน",
+          "เราควรทิ้ง @ ลงในถังให้เป็นที่",
+          "การมี @ คือการช่วยเหลือผู้อื่น",
+        ])),
+
+      card("pink", "๓", "เลือกคำศัพท์ที่กำหนดให้ มาแต่งประโยคของนักเรียนเอง (อย่างน้อย ๕ ประโยค)", `
+        <div class="hint"><b>คำที่ใช้ :</b> แบ่งปัน • น้ำใจ • โหน • งานบ้าน • ช่วยเหลือ • มารยาท</div>
+        ${writeBox()}`),
+
+      card("purple", "๔", "คัดคำต่อไปนี้ด้วยตัวบรรจง",
+        copyActivity(["แบ่งปัน", "น้ำใจ", "โหน", "งานบ้าน", "ขยะ", "ช่วยเหลือ", "มารยาท", "เสริม", "เสร็จ", "พอใจ"])),
+    ],
+  },
+
+  // ============ WS 6: สระโ-ะ เมื่อมีตัวสะกด ============
+  {
+    num: "๖",
+    topic: "สระโ–ะ ( โ–ะ ) เมื่อมีตัวสะกด",
+    objective: "บอกรูปสระโ–ะได้ และแจกลูกสะกดคำที่ประสมด้วยสระโ–ะเมื่อมีตัวสะกดได้",
+    activities: [
+      card("yellow", "๑", "อ่านกฎแล้วเติมคำตอบลงในช่องว่าง", `
+        <div class="song" style="border-color:var(--yellow-b);color:#7a4a00;text-align:left;line-height:1.7">
+          <div class="title" style="text-align:center">♪  จำให้ขึ้นใจ  ♪</div>
+          <div>• สระ <b>โ–ะ</b> อ่านว่า <span class="blank"></span></div>
+          <div>• เมื่อ สระ โ–ะ <b>มีตัวสะกด จะลดรูป</b> ไม่มีรูปสระปรากฏ เช่น โกะ + ก = <span class="blank"></span></div>
+          <div class="note"><b>คำที่ใช้เติม :</b> โอะ &nbsp;•&nbsp; กก</div>
+        </div>`),
+
+      card("green", "๒", "เติมพยัญชนะต้นที่กำหนด แล้วประสมเป็นคำ (สระโ–ะ ลดรูป)",
+        tableActivity("green",
+          ["พยัญชนะต้น", "+ ตัวสะกด", "= คำ (ให้นักเรียนเขียน)"],
+          [
+            ["ก", "ด", ""],
+            ["น", "ก", ""],
+            ["ล", "ง", ""],
+            ["ห", "มด", ""],
+            ["ห", "ยก", ""],
+          ])),
+
+      card("pink", "๓", "อ่านแจกลูกสะกดคำต่อไปนี้แล้วเขียนคำที่อ่านได้",
+        spellActivity(
+          ["รถ", "ส้ม", "คั้น", "ฝน", "หลบ"],
+          "<b>ตก</b> &nbsp;→&nbsp; ต – โอะ – ก &nbsp; อ่านว่า &nbsp; <b>ตก</b>")),
+
+      card("purple", "๔", "คัดคำที่ประสมด้วยสระโ–ะ (มีตัวสะกด) ต่อไปนี้ด้วยตัวบรรจง",
+        copyActivity(["รถ", "นก", "กด", "ลง", "หมด", "หมก", "หยด", "หยก", "หลง", "หล่น"])),
+    ],
+  },
+
+  // ============ WS 7: คำที่มี ห นำ ============
+  {
+    num: "๗",
+    topic: "คำที่มี ห เป็นอักษรนำ",
+    objective: "อ่านออกเสียงและผันวรรณยุกต์คำที่มี ห เป็นอักษรนำได้ถูกต้องชัดเจน",
+    activities: [
+      card("yellow", "๑", "อ่านบท “อย่า อยู่ อย่าง อยาก” แล้วเติมคำที่หายไปลงในช่องว่าง",
+        songActivity("อย่า อยู่ อย่าง อยาก",
+          [
+            `อย่า อยู่ อย่าง <span class="blank"></span>`,
+            `อย่า <span class="blank"></span> อย่าง อยาก`,
+            `มีด้วยกัน <span class="blank"></span> คำ`,
+            `อ นำ ย ไม่ต้องอ่านออกเสียง <span class="blank"></span>`,
+          ],
+          "อยาก &nbsp;•&nbsp; อยู่ &nbsp;•&nbsp; ๔ &nbsp;•&nbsp; อ")),
+
+      card("green", "๒", "วงกลมคำที่มี “ห เป็นอักษรนำ” ในกลุ่มคำต่อไปนี้",
+        wordGridActivity([
+          "ไหม", "หมอก", "หลาย", "หลอก",
+          "ไหน", "เหนือ", "หยาบ", "หยุด",
+          "มือ", "นอน", "หลาน", "เสือ",
+        ])),
+
+      card("pink", "๓", "ผันวรรณยุกต์คำที่มี ห นำ ให้ครบ ๓ ช่อง (เสียงสามัญ–เอก–โท)",
+        tableActivity("pink",
+          ["พื้น (สามัญ)", "เอก ( ่ )", "โท ( ้ )"],
+          [
+            ["หนา", "", ""],
+            ["หมอ", "", ""],
+            ["หมู", "", ""],
+            ["หลา", "", ""],
+            ["โหล", "", ""],
+          ])),
+
+      card("purple", "๔", "คัดคำที่มี ห นำ ต่อไปนี้ด้วยตัวบรรจง",
+        copyActivity(["ไหม", "หมอก", "หลาย", "หลอก", "ไหน", "เหนือ", "หยาบ", "หยุด", "หลาน", "หมี"])),
+    ],
+  },
+
+  // ============ WS 8: การแต่งประโยค — ประธาน กริยา ============
+  {
+    num: "๘",
+    topic: "การแต่งประโยค — ภาคประธานและภาคแสดง",
+    objective: "นำคำมาแต่งประโยคให้ได้ใจความ ใช้ภาษาถูกต้อง และคัดลายมือได้",
+    activities: [
+      card("blue", "๑", "อ่านประโยคแล้วแยกภาคประธานและภาคแสดง (กริยา) ลงในตาราง", `
+        <div class="ex" style="border-left-color:var(--blue-b)"><b>ตัวอย่าง :</b> &nbsp; ลิงโหนกิ่งไม้ &nbsp;→&nbsp; ประธาน <b>ลิง</b> | กริยา <b>โหน</b></div>
+        ${tableActivity("blue",
+          ["ประโยค", "ประธาน", "กริยา"],
+          [
+            ["หมีปีนต้นไม้", "", ""],
+            ["น้องแบ่งปันขนม", "", ""],
+            ["ฉันช่วยทำงานบ้าน", "", ""],
+            ["จระเข้นอนผึ่งแดด", "", ""],
+          ])}`),
+
+      card("green", "๒", "นำคำที่กำหนดให้มาแต่งประโยคให้ได้ใจความสมบูรณ์",
+        fillSentences("green", "ช่วยเหลือ • แบ่งปัน • เก็บขยะ • ทำงานบ้าน", [
+          "ฉัน @",
+          "เพื่อน ๆ @",
+          "เด็กดี @",
+          "ทุกคน @",
+        ])),
+
+      card("pink", "๓", "แต่งประโยคของนักเรียนเอง จากคำในบทเรียน มา ๕ ประโยค", `
+        <div class="hint"><b>คำที่ใช้ :</b> น้ำใจ • แบ่งปัน • ช่วยเหลือ • สาธารณะ • มารยาท • งานบ้าน</div>
+        ${writeBox()}`),
+
+      card("purple", "๔", "คัดประโยคต่อไปนี้ด้วยตัวบรรจง", `
+        <table class="copy">
+          <tr><td class="lines" style="height:40px"></td></tr>
+          <tr><td class="lines" style="height:40px"></td></tr>
+        </table>
+        <div class="ex" style="border-left-color:var(--purple-b);margin-top:6px"><b>ประโยค :</b> &nbsp; เราทุกคนควรมีน้ำใจช่วยเหลือกันและกัน</div>`),
+    ],
+  },
+
+  // ============ WS 9: อ่านคล่อง ร้องเล่น “ช่วยกัน” ============
+  {
+    num: "๙",
+    topic: "อ่านคล่อง ร้องเล่น — “ช่วยกัน”",
+    objective: "อ่านคำคล้องจองง่าย ๆ ได้ และร้องเล่นพร้อมแสดงท่าทางประกอบได้",
+    activities: [
+      card("yellow", "๑", "อ่านบทร้องเล่น “ช่วยกัน” แล้วเติมคำที่หายไปลงในช่องว่าง",
+        songActivity("ช่วยกัน",
+          [
+            `บ้านเรามี<span class="blank"></span>`,
+            `รู้จักให้รู้จัก<span class="blank"></span>`,
+            `ต่างดูแลความ<span class="blank"></span>`,
+            `ช่วยเก็บกวาดไปทุก<span class="blank"></span>`,
+          ],
+          "น้ำใจ &nbsp;•&nbsp; รับ &nbsp;•&nbsp; สะอาด &nbsp;•&nbsp; ที่")),
+
+      card("green", "๒", "อ่านเพลง “เด็กดีมีน้ำใจ” แล้วเติมคำที่หายไปลงในช่องว่าง",
+        songActivity("เด็กดีมีน้ำใจ",
+          [
+            `เด็กดีมี<span class="blank"></span> ไปหนใดใครก็ชม`,
+            `ช่วยงานใจ<span class="blank"></span> ต่างระดมร่วมมือพลัน`,
+            `ยากเพียงไหน ร่วมใจ<span class="blank"></span>`,
+            `เธอและฉันมุ่งทำสิ่ง<span class="blank"></span>`,
+          ],
+          "น้ำใจ &nbsp;•&nbsp; รื่นรมย์ &nbsp;•&nbsp; ช่วยกัน &nbsp;•&nbsp; ดี")),
+
+      card("pink", "๓", "วาดท่าทางประกอบที่นักเรียนคิดขึ้น สำหรับบทร้องเล่น “ช่วยกัน”",
+        drawBox("pink", 120, "อธิบายท่าทางที่วาด:")),
+
+      card("purple", "๔", "คัดคำต่อไปนี้ด้วยตัวบรรจง",
+        copyActivity(["ช่วยกัน", "น้ำใจ", "แบ่งปัน", "สะอาด", "เก็บกวาด", "ช่วยเหลือ", "ร่วมมือ", "บ้านเมือง"])),
+    ],
+  },
+
+  // ============ WS 10: แต่งคำคล้องจอง ============
+  {
+    num: "๑๐",
+    topic: "ชวนคิด ชวนทำ — แต่งคำคล้องจอง",
+    objective: "แต่งคำคล้องจองสองพยางค์–สามพยางค์ได้ถูกต้องตามหลักการ",
+    activities: [
+      card("yellow", "๑", "อ่านกฎการต่อคำคล้องจอง แล้วเติมคำตอบ", `
+        <div class="song" style="border-color:var(--yellow-b);color:#7a4a00;text-align:left;line-height:1.7">
+          <div class="title" style="text-align:center">♪  หลักการต่อคำคล้องจอง  ♪</div>
+          <div>คำที่นำมาต่อ <b>คำแรก</b> ต้องมี <b>สระและตัวสะกดเดียวกัน</b> กับ <b>คำสุดท้าย</b> ในวรรคแรก</div>
+          <div style="margin-top:4px">เช่น &nbsp; ช่วยกัน<b>ทำ</b> &nbsp;→&nbsp; <b>ขำ</b>จังเลย &nbsp; ( ทำ – ขำ คล้องจองกัน )</div>
+        </div>`),
+
+      card("green", "๒", "โยงเส้นจับคู่คำที่ “คล้องจอง” กันให้ถูกต้อง",
+        matchActivity([
+          { w: "ทำดี", m: "มีน้ำใจ" },
+          { w: "ช่วยกัน", m: "ขยันเรียน" },
+          { w: "เก็บขยะ", m: "ละทิ้งของ" },
+          { w: "แบ่งปัน", m: "ผูกพันใจ" },
+        ])),
+
+      card("blue", "๓", "เติมคำให้คล้องจองกับคำที่กำหนด (เติมคำของนักเรียนเอง)",
+        tableActivity("blue",
+          ["คำตั้ง", "เติมคำที่คล้องจอง"],
+          [["มีน้ำใจ", ""], ["ทำความดี", ""], ["ช่วยกัน", ""], ["แบ่งปัน", ""], ["สะอาดตา", ""]])),
+
+      card("pink", "๔", "แต่งคำคล้องจองของนักเรียนเอง ในหัวข้อ “การมีน้ำใจ” (อย่างน้อย ๒ วรรค)", `
+        <div class="hint"><b>ตัวอย่าง :</b> ทำความดี &nbsp; มีน้ำใจ</div>
+        ${writeBox()}`),
+
+      card("purple", "๕", "คัดคำคล้องจองต่อไปนี้ด้วยตัวบรรจง",
+        copyActivity(["มีน้ำใจ", "ช่วยกัน", "ทำความดี", "แบ่งปัน", "เก็บขยะ", "บ้านเมืองเรา", "ร่วมมือกัน"])),
+    ],
+  },
+];
+
+if (WORKSHEETS.length === 0) {
+  console.error("WORKSHEETS array is empty — fill it with one entry per plan before running.");
+  process.exit(1);
+}
+
+console.log("Generating HTML files...");
+for (const ws of WORKSHEETS) {
+  writeFileSync(join(__dirname, `worksheet_${ws.num}.html`), buildPage(ws.num, ws.topic, ws.objective, ws.activities), "utf8");
+  console.log(`  ✓ worksheet_${ws.num}.html`);
+}
+
+const EDGE = "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+console.log("\nConverting HTML → PDF via Edge headless...");
+for (const ws of WORKSHEETS) {
+  const htmlPath = join(__dirname, `worksheet_${ws.num}.html`);
+  const pdfPath = join(__dirname, `ใบงานที่_${ws.num}_บทที่_${UNIT_NO}_${UNIT_NAME}.pdf`);
+  const htmlUrl = "file:///" + htmlPath.replace(/\\/g, "/");
+  const cmd = `"${EDGE}" --headless=new --disable-gpu --no-margins --print-to-pdf="${pdfPath}" --print-to-pdf-no-header "${htmlUrl}"`;
+  try { execSync(cmd, { stdio: "pipe", timeout: 60000 }); console.log(`  ✓ ${pdfPath}`); }
+  catch (e) { console.error(`  ✗ Failed for ${ws.num}: ${e.message}`); }
+}
+console.log("\nDone.");

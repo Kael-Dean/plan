@@ -1,0 +1,17 @@
+# dependencies (ติดตั้งใหม่ด้วย npm install)
+node_modules/
+**/node_modules/
+
+# ไฟล์ชั่วคราวจากการ generate ใบงาน
+_ws_*.html
+worksheet_*.html
+
+# ไฟล์ชื่อ device สงวนของ Windows (ขยะ เปิดไม่ได้)
+nul
+**/nul
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
