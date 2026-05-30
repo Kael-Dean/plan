@@ -386,11 +386,42 @@ for (const ws of WORKSHEETS) {
   console.log(`  ✓ _ws_${ws.num}.html`);
 }
 
-const EDGE_CANDIDATES = [
-  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-  "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-];
-const EDGE = EDGE_CANDIDATES.find(p => existsSync(p)) || EDGE_CANDIDATES[0];
+// หา Chrome/Edge อัตโนมัติตาม OS (ตั้ง env BROWSER_PATH เพื่อระบุเองได้)
+function findBrowser() {
+  if (process.env.BROWSER_PATH && existsSync(process.env.BROWSER_PATH)) return process.env.BROWSER_PATH;
+  const byOS = {
+    win32: [
+      "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+    ],
+    darwin: [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+      "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    ],
+    linux: [
+      "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+      "/usr/bin/chromium-browser", "/usr/bin/chromium", "/usr/bin/microsoft-edge",
+    ],
+  };
+  const candidates = byOS[process.platform] || byOS.linux;
+  const found = candidates.find(p => existsSync(p));
+  if (!found) {
+    throw new Error(
+      "ไม่พบ Chrome/Edge สำหรับแปลง PDF บน OS นี้ (" + process.platform + ")\n" +
+      "ตั้งตัวแปรแวดล้อม BROWSER_PATH ให้ชี้ไปที่ไฟล์ browser เอง เช่น:\n" +
+      "  (mac)  export BROWSER_PATH=\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\"\n" +
+      "  (win)  $env:BROWSER_PATH=\"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\"\n" +
+      "ตำแหน่งที่ลองหา:\n  " + candidates.join("\n  ")
+    );
+  }
+  return found;
+}
+const EDGE = findBrowser();
+console.log(`ใช้ browser: ${EDGE}`);
 
 console.log("\nแปลง HTML → PDF ด้วย Edge headless...");
 for (const ws of WORKSHEETS) {

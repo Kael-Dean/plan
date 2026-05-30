@@ -39,13 +39,19 @@ cp .claude/agents/lesson-plan-maker.md ~/.claude/agents/
 ```
 
 ### หมายเหตุความเข้ากันได้ข้าม OS
-- สคริปต์ skill ส่วนใหญ่ทำงานได้ทั้ง Windows/macOS
-- **ข้อยกเว้น:** การแปลง HTML→PDF ของใบงานใช้ Microsoft Edge headless โดย path ใน
-  `generate_worksheets.mjs` และ `แผนคณิตศาสตร์/ใบงานคณิตศาสตร์/build_math_worksheets.mjs`
-  ตั้งไว้เป็น path ของ Windows:
-  `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`
-  บน macOS ให้แก้เป็น Chrome/Edge ของ Mac เช่น
-  `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` (โหมด `--headless=new --print-to-pdf`)
+- สคริปต์ skill ทำงานได้ทั้ง Windows/macOS/Linux
+- การแปลง HTML→PDF ของใบงาน **หา Chrome/Edge อัตโนมัติตาม OS** (ฟังก์ชัน `findBrowser()` ใน
+  `generate_worksheets.mjs` และ `แผนคณิตศาสตร์/ใบงานคณิตศาสตร์/build_math_worksheets.mjs`)
+  รองรับ Edge/Chrome/Chromium/Brave บน Windows, macOS, Linux
+- ถ้าหา browser ไม่เจอ หรืออยากระบุเอง ตั้งตัวแปรแวดล้อม `BROWSER_PATH`:
+  ```bash
+  # macOS
+  export BROWSER_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  ```
+  ```powershell
+  # Windows
+  $env:BROWSER_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
+  ```
 
 ## สร้างใบงานคณิตศาสตร์ใหม่
 
