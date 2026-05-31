@@ -211,7 +211,7 @@ function drawCount(nums) {
 function matchGroups(rows) {
   return `<div class="match">${rows.map(r => `<div class="match-row">
     <div class="match-left">${r.emoji.repeat(r.count)}</div><div class="dotL"></div>
-    <div class="match-mid">…………… โยงเส้น ……………</div>
+    <div class="match-mid"></div>
     <div class="dotR"></div><div class="match-num">${r.num}</div></div>`).join("")}</div>`;
 }
 // เปรียบเทียบสองกลุ่มภาพ — rows:[{lEmoji,lCount,rEmoji,rCount}]
@@ -350,32 +350,48 @@ const WORKSHEETS = [
   {
     num: 6, file: "ใบงานที่ 6 - ความสัมพันธ์ส่วนย่อย-ส่วนรวม 0 ถึง 5",
     title: "ความสัมพันธ์ของจำนวนแบบส่วนย่อย-ส่วนรวม 0 ถึง 5",
-    blocks: [
-      instruct("เติมจำนวนที่หายไปในแผนภาพ <b>ส่วนย่อย-ส่วนรวม</b> ให้ถูกต้อง"),
-      numberBond([
-        { whole: 5, a: 2, b: null },
-        { whole: 4, a: null, b: 1 },
-        { whole: 5, a: 0, b: null },
-        { whole: 3, a: 1, b: null },
-      ]),
-      subH("✏️ แยกจำนวนต่อไปนี้ออกเป็นสองส่วน (เติมได้หลายแบบ)"),
-      splitNumber([5, 4, 3]),
+    pages: [
+      // หน้า 1 — เติมส่วนย่อยที่หายไป (ให้ส่วนรวม + ส่วนย่อยหนึ่งช่อง)
+      [
+        instruct("เติมจำนวนที่หายไปในแผนภาพ <b>ส่วนย่อย-ส่วนรวม</b> ให้ถูกต้อง"),
+        numberBond([
+          { whole: 5, a: 2, b: null }, { whole: 5, a: null, b: 1 },
+          { whole: 4, a: 3, b: null }, { whole: 4, a: null, b: 2 },
+          { whole: 3, a: 1, b: null }, { whole: 5, a: 0, b: null },
+        ]),
+      ],
+      // หน้า 2 — เติมส่วนย่อยทั้งสองช่อง (เติมได้หลายแบบ)
+      [
+        instruct("เติม<b>ส่วนย่อยทั้งสองช่อง</b>ให้รวมกันได้เท่ากับส่วนรวม (เติมได้หลายแบบ)"),
+        numberBond([
+          { whole: 5, a: null, b: null }, { whole: 5, a: null, b: null },
+          { whole: 4, a: null, b: null }, { whole: 4, a: null, b: null },
+          { whole: 3, a: null, b: null }, { whole: 2, a: null, b: null },
+        ]),
+      ],
     ],
   },
 ];
 
 function buildPage(ws) {
+  const pages = ws.pages || [ws.blocks];
+  const sheets = pages.map((blocks, i) => {
+    const brk = i < pages.length - 1 ? ' style="page-break-after:always"' : "";
+    return `<div class="sheet"${brk}>
+${header(ws.num, ws.title)}
+${blocks.join("\n")}
+${footer}
+</div>`;
+  }).join("\n");
   return `<!doctype html><html lang="th"><head><meta charset="utf-8">
 <title>${ws.file}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Mali:wght@400;500;600;700&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>${CSS}</style></head>
-<body><div class="sheet">
-${header(ws.num, ws.title)}
-${ws.blocks.join("\n")}
-${footer}
-</div></body></html>`;
+<body>
+${sheets}
+</body></html>`;
 }
 
 // ================= render =================
